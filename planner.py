@@ -191,9 +191,9 @@ class CFOPlanner:
             response += f"• **Variance:** {variance:+.1f}% "
             
             if variance > 0:
-                response += " (Above budget)"
+                response += "🟢 (Above budget)"
             else:
-                response += " (Below budget)"
+                response += "🔴 (Below budget)"
             
             return response
             
@@ -323,11 +323,11 @@ class CFOPlanner:
                 response += f"• **Current Runway:** {runway_months:.1f} months\n"
                 
                 if runway_months < 6:
-                    response += "• **Status:**  Critical - Consider fundraising\n"
+                    response += "• **Status:** 🔴 Critical - Consider fundraising\n"
                 elif runway_months < 12:
-                    response += "• **Status:**  Caution - Monitor closely\n"
+                    response += "• **Status:** 🟡 Caution - Monitor closely\n"
                 else:
-                    response += "• **Status:**  Healthy\n"
+                    response += "• **Status:** 🟢 Healthy\n"
             
             if current_cash:
                 response += f"• **Current Cash:** ${current_cash/1_000_000:.1f}M\n"
@@ -359,4 +359,63 @@ class CFOPlanner:
             
             for _, row in data.iterrows():
                 month_name = datetime.strptime(row['month'], '%Y-%m').strftime('%b %Y')
-                balance = row['cash_balance_usd'] / 1_000_
+                balance = row['cash_balance_usd'] / 1_000_000
+                response += f"• {month_name}: ${balance:.1f}M\n"
+            
+            # Calculate net change
+            if len(data) > 1:
+                first_balance = data.iloc[0]['cash_balance_usd']
+                last_balance = data.iloc[-1]['cash_balance_usd']
+                net_change = (last_balance - first_balance) / 1_000_000
+                response += f"\n**Net Change:** ${net_change:+.1f}M"
+            
+            return response
+            
+        except Exception as e:
+            return f"Error retrieving cash trend: {str(e)}"
+    
+    def _handle_ebitda(self, params: Dict) -> str:
+        """Handle EBITDA queries"""
+        month = params.get('specific_month', '2025-06')
+        
+        try:
+            ebitda_data = self.tools.get_ebitda(month)
+            
+            if not ebitda_data:
+                return f"No EBITDA data available for {month}."
+            
+            month_name = datetime.strptime(month, '%Y-%m').strftime('%B %Y')
+            
+            response = f"**EBITDA for {month_name}:**\n\n"
+            response += f"• **Revenue:** ${ebitda_data['revenue']/1_000_000:.1f}M\n"
+            response += f"• **COGS:** ${ebitda_data['cogs']/1_000_000:.1f}M\n"
+            response += f"• **OpEx:** ${ebitda_data['opex']/1_000_000:.1f}M\n"
+            response += f"• **EBITDA:** ${ebitda_data['ebitda']/1_000_000:.1f}M\n\n"
+            
+            if ebitda_data['revenue'] > 0:
+                ebitda_margin = (ebitda_data['ebitda'] / ebitda_data['revenue']) * 100
+                response += f"**EBITDA Margin:** {ebitda_margin:.1f}%"
+            
+            return response
+            
+        except Exception as e:
+            return f"Error calculating EBITDA: {str(e)}"
+    
+    def _handle_general_query(self, query: str) -> str:
+        """Handle general queries that don't match specific intents"""
+        response = "I can help you with various financial analyses. Here are some things you can ask:\n\n"
+        response += "📊 **Revenue Analysis:**\n"
+        response += "• 'What was June 2025 revenue vs budget?'\n"
+        response += "• 'Show revenue trend for last 3 months'\n\n"
+        response += "💰 **Profitability:**\n"
+        response += "• 'What's our gross margin for June?'\n"
+        response += "• 'Show EBITDA for this month'\n\n"
+        response += "💸 **Expenses:**\n"
+        response += "• 'Break down OpEx by category'\n"
+        response += "• 'How much did we spend on R&D?'\n\n"
+        response += "🏦 **Cash Management:**\n"
+        response += "• 'What is our cash runway?'\n"
+        response += "• 'Show cash trend over 6 months'\n\n"
+        response += "Try asking one of these questions!"
+        
+        return response
