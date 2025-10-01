@@ -21,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS 
 st.markdown("""
 <style>
     .main-header {
@@ -123,7 +123,7 @@ def display_key_metrics():
 
 def display_chat_interface():
     """Display the main chat interface"""
-    st.markdown('<h1 class="main-header">💼 CFO Copilot</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header"> CFO Copilot</h1>', unsafe_allow_html=True)
     st.markdown("### Ask me anything about your financial performance!")
     
     # Sample questions
@@ -198,11 +198,11 @@ def main():
     initialize_session_state()
     
     # Sidebar
-    st.sidebar.title("🎯 Dashboard")
+    st.sidebar.title(" Dashboard")
     display_key_metrics()
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔧 Tools")
+    st.sidebar.markdown("###  Tools")
     if st.sidebar.button("Clear Conversation"):
         st.session_state.messages = []
         st.rerun()
