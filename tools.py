@@ -14,53 +14,60 @@ class FinancialTools:
         Initialize with financial data
         
         Args:
-            actuals_df: Monthly actual financial data
-            budget_df: Monthly budget data
-            fx_df: Foreign exchange rates
-            cash_df: Cash balance data
+            actuals_df: Monthly actual financial data (month, entity, account_category, amount, currency)
+            budget_df: Monthly budget data (month, entity, account_category, amount, currency)
+            fx_df: Foreign exchange rates (month, currency, rate_to_usd)
+            cash_df: Cash balance data (month, entity, cash_usd)
         """
         self.actuals = actuals_df.copy()
         self.budget = budget_df.copy()
         self.fx = fx_df.copy()
         self.cash = cash_df.copy()
         
-        # Get month columns (assuming format like 2025-01, 2025-02, etc.)
-        self.month_columns = [col for col in self.actuals.columns if col.startswith('2025-')]
+        # Ensure month columns are strings in YYYY-MM format
+        self.actuals['month'] = pd.to_datetime(self.actuals['month']).dt.strftime('%Y-%m')
+        self.budget['month'] = pd.to_datetime(self.budget['month']).dt.strftime('%Y-%m')
+        self.fx['month'] = pd.to_datetime(self.fx['month']).dt.strftime('%Y-%m')
+        self.cash['month'] = pd.to_datetime(self.cash['month']).dt.strftime('%Y-%m')
         
-        # Preprocess data
-        self._preprocess_data()
-    
-    def _preprocess_data(self):
-        """Preprocess and clean financial data"""
-        # Fill NaN values with 0
-        for df in [self.actuals, self.budget, self.cash]:
-            df[self.month_columns] = df[self.month_columns].fillna(0)
+        # Get available months
+        self.month_columns = sorted(self.actuals['month'].unique())
         
-        # Ensure FX rates exist for all currencies
-        self.fx = self.fx.fillna(1.0)  # Default to 1.0 USD rate
+        # Create FX lookup dictionary for faster access
+        self._create_fx_lookup()
     
-    def _convert_to_usd(self, df: pd.DataFrame, month: str) -> pd.DataFrame:
-        """Convert amounts to USD using FX rates"""
+    def _create_fx_lookup(self):
+        """Create a dictionary for fast FX rate lookup"""
+        self.fx_lookup = {}
+        for _, row in self.fx.iterrows():
+            key = (row['month'], row['currency'])
+            self.fx_lookup[key] = row['rate_to_usd']
+    
+    def _convert_to_usd(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Convert amounts to USD using FX rates
+        
+        Args:
+            df: DataFrame with columns: month, currency, amount
+            
+        Returns:
+            DataFrame with additional amount_usd column
+        """
         result_df = df.copy()
         
-        if month not in self.month_columns:
-            return result_df
+        # Initialize amount_usd column
+        result_df['amount_usd'] = 0.0
         
         for idx, row in result_df.iterrows():
-            currency = row.get('currency', 'USD')
+            month = row['month']
+            currency = row['currency']
+            amount = row['amount']
             
-            # Get FX rate for this currency and month
-            fx_rate = 1.0  # Default USD rate
-            if currency != 'USD':
-                fx_row = self.fx[self.fx['currency'] == currency]
-                if not fx_row.empty and month in fx_row.columns:
-                    fx_rate = fx_row[month].iloc[0]
-                    if pd.isna(fx_rate) or fx_rate == 0:
-                        fx_rate = 1.0
+            # Get FX rate
+            fx_rate = self.fx_lookup.get((month, currency), 1.0)
             
-            # Convert amount to USD
-            if month in result_df.columns:
-                result_df.loc[idx, f'{month}_usd'] = result_df.loc[idx, month] * fx_rate
+            # Convert to USD
+            result_df.loc[idx, 'amount_usd'] = amount * fx_rate
         
         return result_df
     
@@ -76,150 +83,132 @@ class FinancialTools:
             DataFrame with actual and budget revenue in USD
         """
         # Filter for revenue accounts
-        revenue_accounts = self.actuals[self.actuals['account'].str.contains('Revenue|Sales', case=False, na=False)]
-        budget_revenue = self.budget[self.budget['account'].str.contains('Revenue|Sales', case=False, na=False)]
+        revenue_actuals = self.actuals[
+            (self.actuals['account_category'] == 'Revenue') &
+            (self.actuals['month'] >= start_month) &
+            (self.actuals['month'] <= end_month)
+        ].copy()
         
-        results = []
+        revenue_budget = self.budget[
+            (self.budget['account_category'] == 'Revenue') &
+            (self.budget['month'] >= start_month) &
+            (self.budget['month'] <= end_month)
+        ].copy()
         
-        # Get months between start and end
-        months = [col for col in self.month_columns if start_month <= col <= end_month]
+        # Convert to USD
+        revenue_actuals_usd = self._convert_to_usd(revenue_actuals)
+        revenue_budget_usd = self._convert_to_usd(revenue_budget)
         
-        for month in months:
-            if month not in self.month_columns:
-                continue
-                
-            # Calculate actual revenue
-            actual_with_usd = self._convert_to_usd(revenue_accounts, month)
-            actual_total = actual_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in actual_with_usd.columns else 0
-            
-            # Calculate budget revenue
-            budget_with_usd = self._convert_to_usd(budget_revenue, month)
-            budget_total = budget_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in budget_with_usd.columns else 0
-            
-            results.append({
-                'month': month,
-                'actual_usd': actual_total,
-                'budget_usd': budget_total,
-                'variance_usd': actual_total - budget_total,
-                'variance_pct': ((actual_total - budget_total) / budget_total * 100) if budget_total > 0 else 0
-            })
+        # Group by month
+        actuals_by_month = revenue_actuals_usd.groupby('month')['amount_usd'].sum().reset_index()
+        actuals_by_month.columns = ['month', 'actual_usd']
         
-        return pd.DataFrame(results)
+        budget_by_month = revenue_budget_usd.groupby('month')['amount_usd'].sum().reset_index()
+        budget_by_month.columns = ['month', 'budget_usd']
+        
+        # Merge
+        result = pd.merge(actuals_by_month, budget_by_month, on='month', how='outer')
+        result = result.fillna(0)
+        
+        # Calculate variance
+        result['variance_usd'] = result['actual_usd'] - result['budget_usd']
+        result['variance_pct'] = (result['variance_usd'] / result['budget_usd'] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+        
+        return result.sort_values('month')
     
     def get_revenue_trend(self, start_month: str, end_month: str) -> pd.DataFrame:
         """Get revenue trend over time"""
-        revenue_accounts = self.actuals[self.actuals['account'].str.contains('Revenue|Sales', case=False, na=False)]
+        revenue_actuals = self.actuals[
+            (self.actuals['account_category'] == 'Revenue') &
+            (self.actuals['month'] >= start_month) &
+            (self.actuals['month'] <= end_month)
+        ].copy()
         
-        results = []
-        months = [col for col in self.month_columns if start_month <= col <= end_month]
+        # Convert to USD
+        revenue_actuals_usd = self._convert_to_usd(revenue_actuals)
         
-        for month in months:
-            if month not in self.month_columns:
-                continue
-                
-            actual_with_usd = self._convert_to_usd(revenue_accounts, month)
-            revenue_total = actual_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in actual_with_usd.columns else 0
-            
-            results.append({
-                'month': month,
-                'revenue_usd': revenue_total
-            })
+        # Group by month
+        result = revenue_actuals_usd.groupby('month')['amount_usd'].sum().reset_index()
+        result.columns = ['month', 'revenue_usd']
         
-        return pd.DataFrame(results)
+        return result.sort_values('month')
     
     def get_gross_margin_trend(self, start_month: str, end_month: str) -> pd.DataFrame:
         """Calculate gross margin trend"""
-        revenue_accounts = self.actuals[self.actuals['account'].str.contains('Revenue|Sales', case=False, na=False)]
-        cogs_accounts = self.actuals[self.actuals['account'].str.contains('COGS|Cost of Goods|Cost of Sales', case=False, na=False)]
+        # Get revenue
+        revenue_actuals = self.actuals[
+            (self.actuals['account_category'] == 'Revenue') &
+            (self.actuals['month'] >= start_month) &
+            (self.actuals['month'] <= end_month)
+        ].copy()
         
-        results = []
-        months = [col for col in self.month_columns if start_month <= col <= end_month]
+        # Get COGS
+        cogs_actuals = self.actuals[
+            (self.actuals['account_category'] == 'COGS') &
+            (self.actuals['month'] >= start_month) &
+            (self.actuals['month'] <= end_month)
+        ].copy()
         
-        for month in months:
-            if month not in self.month_columns:
-                continue
-            
-            # Calculate revenue
-            revenue_with_usd = self._convert_to_usd(revenue_accounts, month)
-            revenue_total = revenue_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in revenue_with_usd.columns else 0
-            
-            # Calculate COGS
-            cogs_with_usd = self._convert_to_usd(cogs_accounts, month)
-            cogs_total = cogs_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in cogs_with_usd.columns else 0
-            
-            # Calculate gross margin
-            gross_profit = revenue_total - cogs_total
-            gross_margin_pct = (gross_profit / revenue_total * 100) if revenue_total > 0 else 0
-            
-            results.append({
-                'month': month,
-                'revenue_usd': revenue_total,
-                'cogs_usd': cogs_total,
-                'gross_profit_usd': gross_profit,
-                'gross_margin_pct': gross_margin_pct
-            })
+        # Convert to USD
+        revenue_usd = self._convert_to_usd(revenue_actuals)
+        cogs_usd = self._convert_to_usd(cogs_actuals)
         
-        return pd.DataFrame(results)
+        # Group by month
+        revenue_by_month = revenue_usd.groupby('month')['amount_usd'].sum().reset_index()
+        revenue_by_month.columns = ['month', 'revenue_usd']
+        
+        cogs_by_month = cogs_usd.groupby('month')['amount_usd'].sum().reset_index()
+        cogs_by_month.columns = ['month', 'cogs_usd']
+        
+        # Merge and calculate margin
+        result = pd.merge(revenue_by_month, cogs_by_month, on='month', how='outer')
+        result = result.fillna(0)
+        
+        result['gross_profit_usd'] = result['revenue_usd'] - result['cogs_usd']
+        result['gross_margin_pct'] = (result['gross_profit_usd'] / result['revenue_usd'] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+        
+        return result.sort_values('month')
     
     def get_opex_breakdown(self, month: str) -> pd.DataFrame:
         """Get operating expense breakdown by category"""
-        # Filter for OpEx accounts (exclude Revenue and COGS)
-        opex_accounts = self.actuals[
-            ~self.actuals['account'].str.contains('Revenue|Sales|COGS|Cost of Goods|Cost of Sales', case=False, na=False)
-        ]
+        # Filter for OpEx accounts (those starting with 'Opex:')
+        opex_actuals = self.actuals[
+            (self.actuals['account_category'].str.startswith('Opex:', na=False)) &
+            (self.actuals['month'] == month)
+        ].copy()
         
-        if month not in self.month_columns:
+        if opex_actuals.empty:
             return pd.DataFrame()
         
         # Convert to USD
-        opex_with_usd = self._convert_to_usd(opex_accounts, month)
+        opex_usd = self._convert_to_usd(opex_actuals)
         
-        # Group by account category (simplified categorization)
-        results = []
-        
-        for _, row in opex_with_usd.iterrows():
-            account = row['account']
-            amount_usd = row.get(f'{month}_usd', 0)
-            
-            if amount_usd == 0:
-                continue
-            
-            # Categorize expenses (simplified logic)
-            category = self._categorize_expense(account)
-            
-            results.append({
-                'account': account,
-                'category': category,
-                'amount_usd': amount_usd,
-                'month': month
-            })
-        
-        df = pd.DataFrame(results)
+        # Extract category (everything after 'Opex:')
+        opex_usd['category'] = opex_usd['account_category'].str.replace('Opex:', '')
         
         # Group by category
-        if not df.empty:
-            grouped = df.groupby('category')['amount_usd'].sum().reset_index()
-            grouped['month'] = month
-            return grouped
+        result = opex_usd.groupby('category')['amount_usd'].sum().reset_index()
+        result.columns = ['category', 'amount_usd']
+        result['month'] = month
         
-        return df
+        return result.sort_values('amount_usd', ascending=False)
     
-    def _categorize_expense(self, account: str) -> str:
-        """Categorize expense accounts into broad categories"""
-        account_lower = account.lower()
+    def get_opex_trend(self, start_month: str, end_month: str) -> pd.DataFrame:
+        """Get total OpEx trend over time"""
+        opex_actuals = self.actuals[
+            (self.actuals['account_category'].str.startswith('Opex:', na=False)) &
+            (self.actuals['month'] >= start_month) &
+            (self.actuals['month'] <= end_month)
+        ].copy()
         
-        if any(term in account_lower for term in ['r&d', 'research', 'development', 'engineering']):
-            return 'R&D'
-        elif any(term in account_lower for term in ['sales', 'marketing', 'advertising']):
-            return 'Sales & Marketing'
-        elif any(term in account_lower for term in ['admin', 'general', 'legal', 'finance', 'hr']):
-            return 'General & Admin'
-        elif any(term in account_lower for term in ['rent', 'office', 'utilities', 'facilities']):
-            return 'Facilities'
-        elif any(term in account_lower for term in ['salary', 'wages', 'payroll', 'compensation']):
-            return 'Personnel'
-        else:
-            return 'Other'
+        # Convert to USD
+        opex_usd = self._convert_to_usd(opex_actuals)
+        
+        # Group by month
+        result = opex_usd.groupby('month')['amount_usd'].sum().reset_index()
+        result.columns = ['month', 'opex_usd']
+        
+        return result.sort_values('month')
     
     def get_cash_runway(self) -> Optional[float]:
         """Calculate cash runway in months"""
@@ -240,15 +229,16 @@ class FinancialTools:
     def get_current_cash_balance(self) -> Optional[float]:
         """Get current cash balance in USD"""
         try:
-            # Get the latest month with data
-            latest_month = max(self.month_columns)
+            if self.cash.empty:
+                return None
             
-            cash_with_usd = self._convert_to_usd(self.cash, latest_month)
+            # Get the latest month
+            latest_month = self.cash['month'].max()
             
-            if f'{latest_month}_usd' in cash_with_usd.columns:
-                return cash_with_usd[f'{latest_month}_usd'].sum()
+            # Sum cash across all entities for the latest month
+            current_cash = self.cash[self.cash['month'] == latest_month]['cash_usd'].sum()
             
-            return None
+            return current_cash
             
         except Exception as e:
             print(f"Error getting current cash balance: {e}")
@@ -257,15 +247,23 @@ class FinancialTools:
     def get_average_burn_rate(self, months: int = 3) -> Optional[float]:
         """Calculate average monthly burn rate over specified months"""
         try:
-            # Get cash trend for the last N months
-            latest_months = self.month_columns[-months:]
+            if self.cash.empty:
+                return None
             
+            # Get unique months sorted
+            unique_months = sorted(self.cash['month'].unique())
+            
+            if len(unique_months) < 2:
+                return None
+            
+            # Get last N months
+            last_n_months = unique_months[-months:]
+            
+            # Calculate cash balances for these months
             cash_balances = []
-            for month in latest_months:
-                cash_with_usd = self._convert_to_usd(self.cash, month)
-                if f'{month}_usd' in cash_with_usd.columns:
-                    balance = cash_with_usd[f'{month}_usd'].sum()
-                    cash_balances.append(balance)
+            for month in last_n_months:
+                balance = self.cash[self.cash['month'] == month]['cash_usd'].sum()
+                cash_balances.append(balance)
             
             if len(cash_balances) < 2:
                 return None
@@ -285,45 +283,43 @@ class FinancialTools:
     
     def get_cash_trend(self, start_month: str, end_month: str) -> pd.DataFrame:
         """Get cash balance trend"""
-        results = []
-        months = [col for col in self.month_columns if start_month <= col <= end_month]
+        cash_filtered = self.cash[
+            (self.cash['month'] >= start_month) &
+            (self.cash['month'] <= end_month)
+        ].copy()
         
-        for month in months:
-            if month not in self.month_columns:
-                continue
-                
-            cash_with_usd = self._convert_to_usd(self.cash, month)
-            balance = cash_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in cash_with_usd.columns else 0
-            
-            results.append({
-                'month': month,
-                'cash_balance_usd': balance
-            })
+        # Group by month (in case there are multiple entities)
+        result = cash_filtered.groupby('month')['cash_usd'].sum().reset_index()
+        result.columns = ['month', 'cash_balance_usd']
         
-        return pd.DataFrame(results)
+        return result.sort_values('month')
     
     def get_ebitda(self, month: str) -> Optional[Dict[str, float]]:
         """Calculate EBITDA for a given month"""
         try:
-            if month not in self.month_columns:
-                return None
-            
             # Revenue
-            revenue_accounts = self.actuals[self.actuals['account'].str.contains('Revenue|Sales', case=False, na=False)]
-            revenue_with_usd = self._convert_to_usd(revenue_accounts, month)
-            revenue = revenue_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in revenue_with_usd.columns else 0
+            revenue_actuals = self.actuals[
+                (self.actuals['account_category'] == 'Revenue') &
+                (self.actuals['month'] == month)
+            ].copy()
+            revenue_usd = self._convert_to_usd(revenue_actuals)
+            revenue = revenue_usd['amount_usd'].sum()
             
             # COGS
-            cogs_accounts = self.actuals[self.actuals['account'].str.contains('COGS|Cost of Goods|Cost of Sales', case=False, na=False)]
-            cogs_with_usd = self._convert_to_usd(cogs_accounts, month)
-            cogs = cogs_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in cogs_with_usd.columns else 0
+            cogs_actuals = self.actuals[
+                (self.actuals['account_category'] == 'COGS') &
+                (self.actuals['month'] == month)
+            ].copy()
+            cogs_usd = self._convert_to_usd(cogs_actuals)
+            cogs = cogs_usd['amount_usd'].sum()
             
             # OpEx
-            opex_accounts = self.actuals[
-                ~self.actuals['account'].str.contains('Revenue|Sales|COGS|Cost of Goods|Cost of Sales', case=False, na=False)
-            ]
-            opex_with_usd = self._convert_to_usd(opex_accounts, month)
-            opex = opex_with_usd[f'{month}_usd'].sum() if f'{month}_usd' in opex_with_usd.columns else 0
+            opex_actuals = self.actuals[
+                (self.actuals['account_category'].str.startswith('Opex:', na=False)) &
+                (self.actuals['month'] == month)
+            ].copy()
+            opex_usd = self._convert_to_usd(opex_actuals)
+            opex = opex_usd['amount_usd'].sum()
             
             # EBITDA = Revenue - COGS - OpEx (simplified, ignoring D&A)
             ebitda = revenue - cogs - opex
@@ -339,3 +335,18 @@ class FinancialTools:
         except Exception as e:
             print(f"Error calculating EBITDA: {e}")
             return None
+    
+    def get_ebitda_trend(self, start_month: str, end_month: str) -> pd.DataFrame:
+        """Get EBITDA trend over time"""
+        months = [m for m in self.month_columns if start_month <= m <= end_month]
+        
+        results = []
+        for month in months:
+            ebitda_data = self.get_ebitda(month)
+            if ebitda_data:
+                results.append(ebitda_data)
+        
+        if results:
+            return pd.DataFrame(results)
+        else:
+            return pd.DataFrame()
