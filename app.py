@@ -90,8 +90,11 @@ def display_key_metrics():
     if "tools" in st.session_state:
         tools = st.session_state.tools
         
-        # Get latest month data
-        latest_month = "2025-06"  # Assuming June 2025 as latest
+        # Get latest month data from available months
+        try:
+            latest_month = max(tools.month_columns)
+        except:
+            latest_month = "2025-06"
         
         try:
             # Revenue
@@ -105,7 +108,8 @@ def display_key_metrics():
             # Cash Runway
             runway = tools.get_cash_runway()
             
-            st.sidebar.markdown("### 📊 Key Metrics (June 2025)")
+            month_display = datetime.strptime(latest_month, '%Y-%m').strftime('%B %Y')
+            st.sidebar.markdown(f"### 📊 Key Metrics ({month_display})")
             
             col1, col2 = st.sidebar.columns(2)
             with col1:
@@ -119,7 +123,7 @@ def display_key_metrics():
 
 def display_chat_interface():
     """Display the main chat interface"""
-    st.markdown('<h1 class="main-header"> CFO Copilot</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">💼 CFO Copilot</h1>', unsafe_allow_html=True)
     st.markdown("### Ask me anything about your financial performance!")
     
     # Sample questions
@@ -159,7 +163,7 @@ def handle_query(query: str):
 def display_conversation():
     """Display the conversation history"""
     if st.session_state.messages:
-        st.markdown("### Conversation")
+        st.markdown("### 💬 Conversation")
         
         for message in st.session_state.messages:
             if message["role"] == "user":
@@ -181,7 +185,7 @@ def display_conversation():
                         if chart_data.strip():
                             try:
                                 # This would be enhanced to parse actual chart data
-                                st.info(" Chart would be displayed here")
+                                st.info("📈 Chart would be displayed here")
                             except:
                                 pass
                     else:
@@ -194,11 +198,11 @@ def main():
     initialize_session_state()
     
     # Sidebar
-    st.sidebar.title("Dashboard")
+    st.sidebar.title("🎯 Dashboard")
     display_key_metrics()
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("###  Tools")
+    st.sidebar.markdown("### 🔧 Tools")
     if st.sidebar.button("Clear Conversation"):
         st.session_state.messages = []
         st.rerun()
