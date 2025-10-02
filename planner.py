@@ -2,6 +2,7 @@ import re
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
 from datetime import datetime
+from dateutil.relativedelta import relativedelta
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -21,7 +22,8 @@ class CFOPlanner:
                 r'revenue.*vs.*budget',
                 r'revenue.*compared.*budget',
                 r'actual.*revenue.*budget',
-                r'budget.*vs.*revenue'
+                r'budget.*vs.*revenue',
+                r'revenue.*against.*budget'
             ],
             'revenue_trend': [
                 r'revenue.*trend',
@@ -40,7 +42,9 @@ class CFOPlanner:
                 r'operating.*expense',
                 r'break.*down.*expense',
                 r'expense.*categor',
-                r'spending.*breakdown'
+                r'spending.*breakdown',
+                r'break.*down.*opex',
+                r'spending.*category'
             ],
             'cash_runway': [
                 r'cash.*runway',
@@ -59,6 +63,32 @@ class CFOPlanner:
                 r'earnings'
             ]
         }
+    
+    def _get_latest_month(self) -> str:
+        """Get the latest month from available data"""
+        if self.tools.month_columns:
+            return max(self.tools.month_columns)
+        return '2025-12'  # Fallback
+    
+    def _calculate_month_range(self, months_back: int, end_month: str = None) -> Tuple[str, str]:
+        """
+        Calculate start and end months for a relative period
+        
+        Args:
+            months_back: Number of months to go back
+            end_month: End month (defaults to latest)
+            
+        Returns:
+            Tuple of (start_month, end_month)
+        """
+        if end_month is None:
+            end_month = self._get_latest_month()
+        
+        end_dt = datetime.strptime(end_month, '%Y-%m')
+        start_dt = end_dt - relativedelta(months=months_back - 1)
+        start_month = start_dt.strftime('%Y-%m')
+        
+        return start_month, end_month
     
     def classify_intent(self, query: str) -> Tuple[str, Dict]:
         """
@@ -107,8 +137,8 @@ class CFOPlanner:
             if month_name in query:
                 # Assume 2025 if no year specified
                 year = '2025'
-                if re.search(r'202[4-6]', query):
-                    year = re.search(r'202[4-6]', query).group()
+                if re.search(r'202[3-6]', query):
+                    year = re.search(r'202[3-6]', query).group()
                 params['specific_month'] = f"{year}-{month_num}"
                 break
         
@@ -128,9 +158,9 @@ class CFOPlanner:
             if quarter_match:
                 params['period'] = f'q{quarter_match.group(1)}'
         
-        # Default to current month if no time specified
+        # Default to latest available month if no time specified
         if 'specific_month' not in params and 'period' not in params:
-            params['specific_month'] = '2025-06'  # Default to June 2025
+            params['specific_month'] = self._get_latest_month()
         
         return params
     
@@ -170,7 +200,7 @@ class CFOPlanner:
     
     def _handle_revenue_vs_budget(self, params: Dict) -> str:
         """Handle revenue vs budget queries"""
-        month = params.get('specific_month', '2025-06')
+        month = params.get('specific_month', self._get_latest_month())
         
         try:
             data = self.tools.get_revenue_vs_budget(month, month)
@@ -203,15 +233,15 @@ class CFOPlanner:
     def _handle_revenue_trend(self, params: Dict) -> str:
         """Handle revenue trend queries"""
         try:
+            latest_month = self._get_latest_month()
+            
             if params.get('period') == 'last_3_months':
-                start_month = '2025-04'
-                end_month = '2025-06'
+                start_month, end_month = self._calculate_month_range(3, latest_month)
             elif params.get('period') == 'last_6_months':
-                start_month = '2025-01'
-                end_month = '2025-06'
+                start_month, end_month = self._calculate_month_range(6, latest_month)
             else:
-                start_month = '2025-01'
-                end_month = '2025-06'
+                # Default to last 6 months
+                start_month, end_month = self._calculate_month_range(6, latest_month)
             
             data = self.tools.get_revenue_trend(start_month, end_month)
             
@@ -240,11 +270,12 @@ class CFOPlanner:
     def _handle_gross_margin(self, params: Dict) -> str:
         """Handle gross margin queries"""
         try:
+            latest_month = self._get_latest_month()
+            
             if params.get('period') == 'last_3_months':
-                start_month = '2025-04'
-                end_month = '2025-06'
+                start_month, end_month = self._calculate_month_range(3, latest_month)
             else:
-                month = params.get('specific_month', '2025-06')
+                month = params.get('specific_month', latest_month)
                 start_month = end_month = month
             
             data = self.tools.get_gross_margin_trend(start_month, end_month)
@@ -281,7 +312,7 @@ class CFOPlanner:
     
     def _handle_opex_breakdown(self, params: Dict) -> str:
         """Handle operating expense breakdown queries"""
-        month = params.get('specific_month', '2025-06')
+        month = params.get('specific_month', self._get_latest_month())
         
         try:
             data = self.tools.get_opex_breakdown(month)
@@ -343,12 +374,13 @@ class CFOPlanner:
     def _handle_cash_trend(self, params: Dict) -> str:
         """Handle cash trend queries"""
         try:
+            latest_month = self._get_latest_month()
+            
             if params.get('period') == 'last_6_months':
-                start_month = '2025-01'
-                end_month = '2025-06'
+                start_month, end_month = self._calculate_month_range(6, latest_month)
             else:
-                start_month = '2025-01'
-                end_month = '2025-06'
+                # Default to last 6 months
+                start_month, end_month = self._calculate_month_range(6, latest_month)
             
             data = self.tools.get_cash_trend(start_month, end_month)
             
@@ -376,7 +408,7 @@ class CFOPlanner:
     
     def _handle_ebitda(self, params: Dict) -> str:
         """Handle EBITDA queries"""
-        month = params.get('specific_month', '2025-06')
+        month = params.get('specific_month', self._get_latest_month())
         
         try:
             ebitda_data = self.tools.get_ebitda(month)
