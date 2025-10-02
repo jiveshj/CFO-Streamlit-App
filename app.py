@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 import sys
 from pathlib import Path
+import json
 
 # Add the agent directory to the Python path
 sys.path.append(str(Path(__file__).parent / "agent"))
@@ -177,20 +178,20 @@ def display_conversation():
                     if "CHART_DATA:" in content:
                         parts = content.split("CHART_DATA:")
                         text_part = parts[0]
-                        chart_data = parts[1] if len(parts) > 1 else ""
-                        
-                        st.markdown(f"**CFO Copilot:** {text_part}")
-                        
-                        # Try to display chart if data exists
-                        if chart_data.strip():
-                            try:
-                                # This would be enhanced to parse actual chart data
-                                st.info("📈 Chart would be displayed here")
-                            except:
-                                pass
+                        chart_json = parts[1] if len(parts) > 1 else ""
+                        try:
+                            chart_data = pd.DataFrame(json.loads(chart_json))
+                            # Example: line chart of revenue
+                            if "revenue_usd" in chart_data.columns:
+                                fig = px.line(chart_data, x="month", y="revenue_usd",
+                                              title="Revenue Trend", markers=True)
+                                fig.update_layout(yaxis_title="Revenue (USD)")
+                                st.plotly_chart(fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Error rendering chart: {e}")
                     else:
                         st.markdown(f"**CFO Copilot:** {content}")
-                    
+        
                     st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
