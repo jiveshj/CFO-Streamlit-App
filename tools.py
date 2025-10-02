@@ -30,6 +30,17 @@ class FinancialTools:
         self.fx['month'] = pd.to_datetime(self.fx['month']).dt.strftime('%Y-%m')
         self.cash['month'] = pd.to_datetime(self.cash['month']).dt.strftime('%Y-%m')
         
+        # Ensure all month values are normalized to strings
+        # self.actuals['month'] = pd.to_datetime(self.actuals['month'], errors="coerce").dt.strftime('%Y-%m')
+        # self.budget['month'] = pd.to_datetime(self.budget['month'], errors="coerce").dt.strftime('%Y-%m')
+        # self.fx['month'] = pd.to_datetime(self.fx['month'], errors="coerce").dt.strftime('%Y-%m')
+        # self.cash['month'] = pd.to_datetime(self.cash['month'], errors="coerce").dt.strftime('%Y-%m')
+
+        # Drop any rows that failed to parse (avoids None values)
+        self.actuals = self.actuals.dropna(subset=['month'])
+        self.budget = self.budget.dropna(subset=['month'])
+        self.fx = self.fx.dropna(subset=['month'])
+        self.cash = self.cash.dropna(subset=['month'])
         # Get available months
         self.month_columns = sorted(self.actuals['month'].unique())
         
