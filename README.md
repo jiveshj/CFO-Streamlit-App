@@ -43,7 +43,9 @@ pip install -r requirements.txt
 # Step 4: Verify Installation 
 #Run tests to verify everything works
 pytest -v
+
 #Should see: All tests passed ✓
+
 #you can also run individual pytest to test tools.py and planner.py. For checking tools.py, run pytest teests/test_tools.py -v and for checking planner.py, run pytest tests/test_agent.py
 
 # Step 5: Launch App 
