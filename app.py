@@ -109,7 +109,7 @@ def display_key_metrics():
             runway = tools.get_cash_runway()
             
             month_display = datetime.strptime(latest_month, '%Y-%m').strftime('%B %Y')
-            st.sidebar.markdown(f"### 📊 Key Metrics ({month_display})")
+            st.sidebar.markdown(f"### Key Metrics ({month_display})")
             
             col1, col2 = st.sidebar.columns(2)
             with col1:
