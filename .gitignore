@@ -4,5 +4,4 @@
 *.mid
 *.log
 *~
-__pycache__/
-    *.pyc
+
