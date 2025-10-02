@@ -255,13 +255,17 @@ class CFOPlanner:
                 revenue = row['revenue_usd'] / 1_000_000
                 response += f"• {month_name}: ${revenue:.1f}M\n"
             
+           
+
+            
             # Calculate growth
             if len(data) > 1:
                 first_month = data.iloc[0]['revenue_usd']
                 last_month = data.iloc[-1]['revenue_usd']
                 growth = ((last_month - first_month) / first_month * 100) if first_month > 0 else 0
                 response += f"\n**Total Growth:** {growth:+.1f}%"
-            
+            # Attach chart data
+            response += "\nCHART_DATA:" + data.to_json(orient="records")
             return response
             
         except Exception as e:
